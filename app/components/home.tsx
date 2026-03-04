@@ -1,17 +1,22 @@
 'use client';
-import { useHashedQuery } from '@/app/hooks/useHashedQuery';
+import { useQueryParams } from '@/app/hooks/useQueryParams';
+import { useFlyoutFromHash } from '@/app/hooks/useFlyoutFromHash';
 import {
   QueryState,
   DEFAULT_QUERY_STATE,
   FILTER_CHIP_OPTIONS,
 } from '@/app/utils/server-query-state';
 
+const QUERY_PARAM_KEYS: (keyof QueryState)[] = ['page', 'color', 'size', 'brand'];
+
 type HomePageProps = { initialServerState?: QueryState };
 
 export default function HomePage({ initialServerState }: HomePageProps = {}) {
-  const { state, set, remove, clear } = useHashedQuery<QueryState>(
-    initialServerState ?? DEFAULT_QUERY_STATE
+  const { state, set, remove, clear } = useQueryParams<QueryState>(
+    initialServerState ?? DEFAULT_QUERY_STATE,
+    QUERY_PARAM_KEYS
   );
+  const { isOpen: flyoutOpen, open: openFlyout, close: closeFlyout } = useFlyoutFromHash();
 
   return (
     <>
@@ -85,15 +90,13 @@ export default function HomePage({ initialServerState }: HomePageProps = {}) {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-sm text-gray-600">Flyout:</span>
+          <span className="text-sm text-gray-600">Flyout (URL hash):</span>
           <button
             type="button"
-            onClick={() =>
-              state.flyout === 'true' ? remove(['flyout']) : set({ flyout: 'true' })
-            }
+            onClick={() => (flyoutOpen ? closeFlyout() : openFlyout())}
             className="px-3 py-1.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200 text-sm font-medium"
           >
-            Set flyout to {state.flyout === 'true' ? 'false' : 'true'}
+            Set flyout to {flyoutOpen ? 'false' : 'true'}
           </button>
         </div>
 

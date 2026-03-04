@@ -1,8 +1,5 @@
-import { decrypt } from '@/app/utils/crypto-query';
-
 export type QueryState = {
   page: number;
-  flyout?: string;
   color?: string;
   size?: string;
   brand?: string;
@@ -18,16 +15,27 @@ export const FILTER_CHIP_OPTIONS = [
   { key: 'brand' as const, label: 'Brand', sampleValue: 'Acme' },
 ];
 
+type SearchParamsRecord = { [key: string]: string | string[] | undefined };
+
+function getStr(param: string | string[] | undefined): string | undefined {
+  if (param == null) return undefined;
+  return Array.isArray(param) ? param[0] : param;
+}
+
 /**
- * Parse hashed query param on the server (e.g. in Page or Server Components).
- * Use this to read ?q=... and get typed state without client hooks.
+ * Read query state from plain URL search params (e.g. ?page=1&color=Blue).
+ * Use in Server Components (page receives searchParams as Promise).
  */
 export function getServerQueryState(
-  searchParams: { q?: string | string[] } | null | undefined
+  searchParams: SearchParamsRecord | null | undefined
 ): QueryState {
-  const q = searchParams?.q;
-  const raw = Array.isArray(q) ? q[0] : q;
-  if (!raw) return DEFAULT_QUERY_STATE;
-  const parsed = decrypt<QueryState>(raw);
-  return parsed ?? DEFAULT_QUERY_STATE;
+  if (!searchParams) return DEFAULT_QUERY_STATE;
+  const pageStr = getStr(searchParams.page);
+  const page = pageStr ? parseInt(pageStr, 10) : 1;
+  return {
+    page: Number.isFinite(page) ? page : 1,
+    color: getStr(searchParams.color) ?? undefined,
+    size: getStr(searchParams.size) ?? undefined,
+    brand: getStr(searchParams.brand) ?? undefined,
+  };
 }

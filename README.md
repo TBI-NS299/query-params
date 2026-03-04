@@ -1,23 +1,19 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-It demonstrates **hashed query params**: keeping all UI state (filters, page, flyout, etc.) in a single `?q=...` encoded value so the URL stays clean and the same state can be read on both the server and the client.
+It demonstrates **URL params + flyout hash**:
+
+- **Plain URL search params** for page and filters (e.g. `?page=1&color=Blue&size=M`). Read on the server and updated on the client; back/forward works.
+- **URL hash** only for the layout flyout: `#flyout` means open; no hash means closed. Hash is client-only; the flyout in the layout opens/closes from the hash.
 
 ---
 
-## Hashed Query Params — How It Works
+## URL Params & Flyout Hash — How It Works
 
-### What problem it solves
+### What this does
 
-- You want many values in the URL (page, filters, open panels) without a long, readable query string.
-- You want to **read** that state in **Server Components** (e.g. for SEO or initial HTML) and **update** it in **Client Components** (e.g. buttons, forms).
-- You want back/forward to work and optional control over whether an update adds a history entry.
-
-### High-level flow
-
-1. **State** is a plain object (e.g. `{ page: 1, color: 'Blue', flyout: 'true' }`).
-2. It is **encoded** (e.g. base64) into a single string and put in the URL as `?q=<encoded>`.
-3. **Server**: the page receives `searchParams`; you decode `q` to get the state and pass it down (or use it for rendering).
-4. **Client**: a hook reads `q` from the URL, keeps it in React state, and updates the URL when the user changes filters/page/etc.
+- **Query state** (page, filters) lives in **plain search params** (`?page=1&color=Blue`). You can read them in Server Components and update them in Client Components.
+- **Flyout** is controlled by the **URL hash** `#flyout`. The layout renders a flyout that opens when the hash is present and closes when it’s removed; back/forward works for the flyout.
+- No encoded/hashed query string; only normal params and one hash for the flyout.
 
 ---
 
@@ -31,7 +27,6 @@ Create a shared type and default object so server and client use the same shape.
 // app/utils/server-query-state.ts
 export type QueryState = {
   page: number;
-  flyout?: string;
   color?: string;
   size?: string;
   brand?: string;
@@ -42,102 +37,81 @@ export const DEFAULT_QUERY_STATE: QueryState = {
 };
 ```
 
-### Step 2: Encode and decode the state (crypto-query) It can also be key protected - code is commented.
+### Step 2: Server — read plain search params
 
-You need two functions: one that turns your state object into a string for the URL, and one that turns the `q` string back into an object. This app uses base64 (see `app/utils/crypto-query.ts`); you can swap in AES or another encoding.
-
-- **`encrypt(data)`** → string (goes in `?q=...`)
-- **`decrypt<T>(string)`** → `T | null`
-
-Both must be callable on the **server** (e.g. Node `Buffer`) and, if you decode on the client, in the browser (e.g. `atob`/`btoa` or the same logic).
-
-### Step 3: Server — parse `searchParams` in the page
-
-In Next.js App Router, the **page** is a Server Component and receives `searchParams` as a **Promise** (Next 15+). Await it, then decode `q` to get your state.
+The page receives `searchParams` as a **Promise** (Next 15+). Await it and pass it to `getServerQueryState` to get typed state from `?page=1&color=Blue`, etc.
 
 ```ts
 // app/page.tsx
 import { getServerQueryState } from '@/app/utils/server-query-state';
 
 type PageProps = {
-  searchParams: Promise<{ q?: string | string[] }>;
+  searchParams: Promise<{ page?: string; color?: string; size?: string; brand?: string }>;
 };
 
 export default async function Home({ searchParams }: PageProps) {
-  const resolved = await searchParams;   // Next 15+: searchParams is a Promise
+  const resolved = await searchParams;
   const params = getServerQueryState(resolved);
 
   return (
     <main>
-      {/* Use params for server-rendered content */}
       <pre>{JSON.stringify(params, null, 2)}</pre>
-      {/* Pass to client so first paint matches */}
       <HomePage initialServerState={params} />
     </main>
   );
 }
 ```
 
-Helper used above:
+`getServerQueryState` reads plain keys from `searchParams` (e.g. `page`, `color`, `size`, `brand`) and returns a `QueryState` object (with `page` as a number).
 
-```ts
-// app/utils/server-query-state.ts
-import { decrypt } from '@/app/utils/crypto-query';
+### Step 3: Client — read and update URL params with the hook
 
-export function getServerQueryState(
-  searchParams: { q?: string | string[] } | null | undefined
-): QueryState {
-  const q = searchParams?.q;
-  const raw = Array.isArray(q) ? q[0] : q;
-  if (!raw) return DEFAULT_QUERY_STATE;
-  const parsed = decrypt<QueryState>(raw);
-  return parsed ?? DEFAULT_QUERY_STATE;
-}
-```
-
-### Step 4: Client — read and update state with the hook
-
-Use the `useHashedQuery` hook in a **Client Component** (`'use client'`). Pass the same default/initial state type and, when the page is server-rendered, pass the server-parsed state so the first paint matches the URL.
+Use the `useQueryParams` hook in a **Client Component** (`'use client'`). It syncs with the URL search params and preserves the hash when updating (so `#flyout` is not lost).
 
 ```ts
 // app/components/home.tsx
 'use client';
-import { useHashedQuery } from '@/app/hooks/useHashedQuery';
+import { useQueryParams } from '@/app/hooks/useQueryParams';
 import { QueryState, DEFAULT_QUERY_STATE } from '@/app/utils/server-query-state';
 
-type HomePageProps = { initialServerState?: QueryState };
+const PARAM_KEYS: (keyof QueryState)[] = ['page', 'color', 'size', 'brand'];
 
 export default function HomePage({ initialServerState }: HomePageProps = {}) {
-  const { state, set, remove, clear } = useHashedQuery<QueryState>(
-    initialServerState ?? DEFAULT_QUERY_STATE
+  const { state, set, remove, clear } = useQueryParams<QueryState>(
+    initialServerState ?? DEFAULT_QUERY_STATE,
+    PARAM_KEYS
   );
 
   return (
     <>
       <p>Page: {state.page}</p>
       <button onClick={() => set({ page: state.page + 1 })}>Next</button>
-      <button onClick={() => remove(['flyout'])}>Close flyout</button>
       <button onClick={clear}>Clear all</button>
     </>
   );
 }
 ```
 
-- **`state`** — current state (from URL).
-- **`set(newValues)`** — merge new values into state and update the URL.
-- **`remove(keys)`** — remove keys from state and update the URL.
-- **`clear()`** — reset to the initial state and update the URL.
+- **`state`** — derived from current URL search params.
+- **`set(newValues)`** — merge into params and update the URL (keeps existing hash).
+- **`remove(keys)`** — remove those params from the URL.
+- **`clear()`** — reset to initial state (e.g. `?page=1` only).
 
-### Step 5: Optional — avoid adding a history entry
+Pass `{ replace: true }` as the second argument to `set` or `remove` to avoid adding a history entry.
 
-By default, updates use `pushState` (back/forward works). To update the URL **without** adding a history entry (e.g. for filters or pagination), pass `{ replace: true }`:
+### Step 4: Flyout via URL hash (layout open/close)
+
+The **flyout** is the only thing that uses the URL hash. When the URL has `#flyout`, the layout shows the flyout open; when the hash is missing, it’s closed. Use the `useFlyoutFromHash` hook:
 
 ```ts
-set({ page: 2 }, { replace: true });
-remove(['color'], { replace: true });
-```
+'use client';
+import { useFlyoutFromHash } from '@/app/hooks/useFlyoutFromHash';
 
-Use the default (no second argument) for things you want in history (e.g. opening/closing a flyout).
+const { isOpen, open, close } = useFlyoutFromHash();
+// isOpen: true when URL ends with #flyout
+// open(): pushState with #flyout (back/forward works)
+// close(): pushState without hash
+```
 
 ---
 
@@ -146,7 +120,8 @@ Use the default (no second argument) for things you want in history (e.g. openin
 | Where              | What you do |
 |--------------------|-------------|
 | **Server Component** (e.g. page) | `await searchParams` → `getServerQueryState(resolved)` → use or pass `params` (e.g. as `initialServerState`). |
-| **Client Component**             | `useHashedQuery<YourState>(initialData)` with `initialServerState` when provided → use `state`, `set`, `remove`, `clear`; pass `{ replace: true }` to avoid a history entry. |
+| **Client Component**             | `useQueryParams<QueryState>(initialData, paramKeys)` → use `state`, `set`, `remove`, `clear`. Pass `{ replace: true }` to avoid a history entry. |
+| **Flyout (layout)**             | `useFlyoutFromHash()` → `isOpen`, `open`, `close`. Open/close is driven only by the URL hash `#flyout`. |
 
 ---
 
